@@ -1,5 +1,4 @@
 import os
-import sys
 import time
 import json
 import random
@@ -23,7 +22,7 @@ from MolNexTR.utils import seed_torch, save_args, init_summary_writer, LossMeter
     print_rank_0, format_df
 from MolNexTR.chemical import convert_graph_to_smiles, postprocess_smiles, keep_main_molecule
 from MolNexTR.tokenization import get_tokenizer
-from evaluate import SmilesEvaluator
+from MolNexTR.evaluate import SmilesEvaluator
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -42,6 +41,7 @@ def get_args():
     parser.add_argument('--print_freq', type=int, default=200)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--backend', type=str, default='gloo', choices=['gloo', 'nccl'])
+    
     # Model-specific options
     parser.add_argument('--encoder', type=str, default='swin_base')
     parser.add_argument('--decoder', type=str, default='lstm')
@@ -109,14 +109,6 @@ def get_args():
     parser.add_argument('--shuffle_nodes', action='store_true')
     parser.add_argument('--save_image', action='store_true')
 
-    # Inference parameters
-    parser.add_argument('--beam_size', type=int, default=1)
-    parser.add_argument('--n_best', type=int, default=1)
-    parser.add_argument('--predict_coords', action='store_true')
-    parser.add_argument('--save_attns', action='store_true')
-    parser.add_argument('--molblock', action='store_true')
-    parser.add_argument('--compute_confidence', action='store_true')
-    parser.add_argument('--keep_main_molecule', action='store_true')
     args = parser.parse_args()
     return args
 
