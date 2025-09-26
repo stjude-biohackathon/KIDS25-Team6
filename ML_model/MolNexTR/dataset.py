@@ -456,12 +456,6 @@ class TrainDataset(Dataset):
                         self._process_chartok_coords(idx, ref, smiles, coords, mask_ratio=0)
                     else:
                         self._process_chartok_coords(idx, ref, smiles, mask_ratio=1)
-            if self.args.predict_coords and ('atomtok_coords' in self.formats or 'chartok_coords' in self.formats):
-                smiles = self.smiles[idx]
-                if 'atomtok_coords' in self.formats:
-                    self._process_atomtok_coords(idx, ref, smiles, mask_ratio=1)
-                if 'chartok_coords' in self.formats:
-                    self._process_chartok_coords(idx, ref, smiles, mask_ratio=1)
             return idx, image, ref
 
     def _process_atomtok_coords(self, idx, ref, smiles, coords=None, edges=None, mask_ratio=0):

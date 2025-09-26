@@ -7,7 +7,9 @@ The implementation of the ML model to predict SMILES strings from single images 
 Download the model checkpoint from https://zenodo.org/records/13304899/files/molnextr_best.pth?download=1
 
 ## Model fine-tuning
-Coming soon
+```bash
+torchrun  --nproc_per_node=1 --nnodes=1 --node_rank 0 --master_addr localhost --master_port 10042 ML_model/train.py --train_file test_mini.csv --data_path Training-Data/test_mini --valid_file test_mini.csv
+``` 
 
 ## Model evaluation
 Coming soon
