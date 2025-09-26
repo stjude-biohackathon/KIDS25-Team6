@@ -8,20 +8,19 @@ import pandas as pd
 
 import torch
 import torch.distributed as dist
-from torch.optim import Adam, AdamW, SGD
+from torch.optim import AdamW
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from transformers import get_scheduler
 
-from MolNexTR.dataset import TrainDataset, AuxTrainDataset, bms_collate
+from MolNexTR.dataset import TrainDataset,  bms_collate
 from MolNexTR.components import Encoder, Decoder
 from MolNexTR.loss_fuc import Criterion
 from MolNexTR.utils import seed_torch, save_args, init_summary_writer, LossMeter, AverageMeter, asMinutes, timeSince, \
     print_rank_0, format_df
 from MolNexTR.chemical import convert_graph_to_smiles, postprocess_smiles, keep_main_molecule
 from MolNexTR.tokenization import get_tokenizer
-from MolNexTR.evaluate import SmilesEvaluator
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -423,6 +422,118 @@ def get_chemdraw_data(args):
 
     tokenizer = get_tokenizer(args)
     return train_df, valid_df, test_df, aux_df, tokenizer
+
+def inference(args, data_df, tokenizer, encoder=None, decoder=None, save_path=None, split='test'):
+    print_rank_0("inference started")
+    print_rank_0(data_df.attrs['file'])
+
+    if args.local_rank == 0 and os.path.isdir(save_path):
+        os.makedirs(save_path, exist_ok=True)
+
+    device = args.device
+
+    dataset = TrainDataset(args, data_df, tokenizer, split=split)
+    if args.local_rank != -1:
+        sampler = DistributedSampler(dataset, shuffle=False)
+    else:
+        sampler = SequentialSampler(dataset)
+    dataloader = DataLoader(dataset,
+                            batch_size=args.batch_size * 2,
+                            sampler=sampler,
+                            num_workers=args.num_workers,
+                            prefetch_factor=4,
+                            persistent_workers=True,
+                            pin_memory=True,
+                            drop_last=False,
+                            collate_fn=bms_collate)
+    if encoder is None or decoder is None:
+        # valid/test mode
+        if args.load_path is None:
+            args.load_path = save_path
+        encoder, decoder = get_model(args, tokenizer, device, args.load_path)
+    predictions = valid_fn(dataloader, encoder, decoder, tokenizer, device, args)
+
+    # The evaluation and saving prediction is only performed in the master process.
+    if args.local_rank != 0:
+        return
+    print('Start evaluation')
+
+    # Deal with discrepancies between datasets
+    if 'pubchem_cid' in data_df.columns:
+        data_df['image_id'] = data_df['pubchem_cid']
+    if 'image_id' not in data_df.columns:
+        data_df['image_id'] = [path.split('/')[-1].split('.')[0] for path in data_df['file_path']]
+    pred_df = data_df[['image_id']].copy()
+    scores = {}
+
+    for format_ in args.formats:
+        if format_ in ['atomtok', 'atomtok_coords', 'chartok_coords']:
+            format_preds = [preds[format_] for preds in predictions]
+            # SMILES
+            pred_df['SMILES'] = [preds['smiles'] for preds in format_preds]
+            if format_ in ['atomtok_coords', 'chartok_coords']:
+                pred_df['node_coords'] = [preds['coords'] for preds in format_preds]
+                pred_df['node_symbols'] = [preds['symbols'] for preds in format_preds]
+            if args.compute_confidence:
+                pred_df['SMILES_scores'] = [preds['scores'] for preds in format_preds]
+                pred_df['indices'] = [preds['indices'] for preds in format_preds]
+
+    # Construct graph from predicted atoms and bonds (including verify chirality)
+    if 'edges' in args.formats:
+        pred_df['edges'] = [preds['edges'] for preds in predictions]
+        if args.compute_confidence:
+            pred_df['edges_scores'] = [preds['edges_scores'] for preds in predictions]
+        smiles_list, molblock_list, r_success = convert_graph_to_smiles(
+            pred_df['node_coords'], pred_df['node_symbols'], pred_df['edges'])
+
+        pred_df['graph_SMILES'] = smiles_list
+        if args.molblock:
+            pred_df['molblock'] = molblock_list
+
+    # Postprocess the predicted SMILES (verify chirality, expand functional groups)
+    if 'SMILES' in pred_df.columns:
+        if 'edges' in pred_df.columns:
+            smiles_list, _, r_success = postprocess_smiles(
+                pred_df['SMILES'], pred_df['node_coords'], pred_df['node_symbols'], pred_df['edges'])
+        else:
+            smiles_list, _, r_success = postprocess_smiles(pred_df['SMILES'])
+        pred_df['post_SMILES'] = smiles_list
+
+    # Keep the main molecule
+    if args.keep_main_molecule:
+        if 'graph_SMILES' in pred_df:
+            pred_df['graph_SMILES'] = keep_main_molecule(pred_df['graph_SMILES'])
+        if 'post_SMILES' in pred_df:
+            pred_df['post_SMILES'] = keep_main_molecule(pred_df['post_SMILES'])
+
+    # Compute scores
+    if 'SMILES' in data_df.columns:
+        evaluator = SmilesEvaluator(data_df['SMILES'], tanimoto=True)
+        if 'SMILES' in pred_df.columns:
+            scores.update(evaluator.evaluate(pred_df['SMILES']))
+        if 'post_SMILES' in pred_df.columns:
+            post_scores = evaluator.evaluate(pred_df['post_SMILES'])
+            scores['postprocessed_smiles'] = post_scores['canon_smiles']
+            scores['postprocessed_graph_smiles'] = post_scores['graph']
+            scores['postprocessed_chiral'] = post_scores['chiral']
+            scores['postprocessed_tanimoto'] = post_scores['tanimoto']
+        if 'graph_SMILES' in pred_df.columns:
+            graph_scores = evaluator.evaluate(pred_df['graph_SMILES'])
+            # scores['graph_smiles'] = graph_scores['canon_smiles']
+            # scores['graph_graph'] = graph_scores['graph']
+            # scores['graph_chiral'] = graph_scores['chiral']
+            # scores['graph_tanimoto'] = graph_scores['tanimoto']
+
+    print('Saving predictions:')
+    file = data_df.attrs['file'].split('/')[-1]
+    pred_df = format_df(pred_df)
+    pred_df.to_csv(os.path.join(save_path, f'prediction_{file}'), index=False)
+    # Save scores
+    if split == 'test':
+        with open(os.path.join(save_path, f'eval_scores_{os.path.splitext(file)[0]}_{args.load_ckpt}.json'), 'w') as f:
+            json.dump(scores, f)
+
+    return scores
 
 def train(args):
     """ """
