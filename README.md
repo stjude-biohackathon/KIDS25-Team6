@@ -12,10 +12,10 @@ Adapt the ```--load_path``` to point to a model checkpoint from which to load th
 
 ```bash
  torchrun --nproc_per_node=1 --nnodes=1 --node_rank 0 --master_addr localhost --master_port 63868 ML_model/train.py \
- --data_path Training-Data \
- --train_file pubchem/train_pubchem.csv  \
+ --data_path Training-Data/test_mini \
+ --train_file test_mini_train.csv  \
  --coords_file aux_file \
- --valid_file real/acs.csv \
+ --valid_file test_mini_valid.csv \
  --vocab_file ML_model/MolNexTR/vocab/vocab_chars.json \
  --formats chartok_coords,edges \
  --dynamic_indigo --augment --mol_augment \
@@ -30,7 +30,7 @@ Adapt the ```--load_path``` to point to a model checkpoint from which to load th
  --save_mode all \
  --label_smoothing 0.1 \
  --epochs 40 \
- --batch_size 64 \
+ --batch_size 32 \
  --gradient_accumulation_steps 1 \
  --use_checkpoint \
  --warmup 0.02 \

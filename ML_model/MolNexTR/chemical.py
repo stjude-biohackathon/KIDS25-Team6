@@ -61,7 +61,7 @@ def align_chirality(smiles1, smiles2):
         match1 = mol1.GetSubstructMatch(mcs_mol)
         match2 = mol2.GetSubstructMatch(mcs_mol)
         if not match1 or not match2:
-            print("MCS映射失败，输出原始smiles2")
+            #print("MCS映射失败，输出原始smiles2")
             return smiles2
         #print(f"mol1 MCS atoms: {match1}")
         #print(f"mol2 MCS atoms: {match2}")
@@ -132,7 +132,7 @@ def align_chirality(smiles1, smiles2):
         return smiles2_new
 
     except Exception as e:
-        print(f"发生异常，输出原始smiles2: {e}")
+        #print(f"发生异常，输出原始smiles2: {e}")
         return smiles2
     
 
