@@ -21,6 +21,7 @@ from MolNexTR.utils import seed_torch, save_args, init_summary_writer, LossMeter
     print_rank_0, format_df
 from MolNexTR.chemical import convert_graph_to_smiles, postprocess_smiles, keep_main_molecule
 from MolNexTR.tokenization import get_tokenizer
+from MolNexTR.evaluate import SmilesEvaluator
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -519,10 +520,6 @@ def inference(args, data_df, tokenizer, encoder=None, decoder=None, save_path=No
             scores['postprocessed_tanimoto'] = post_scores['tanimoto']
         if 'graph_SMILES' in pred_df.columns:
             graph_scores = evaluator.evaluate(pred_df['graph_SMILES'])
-            # scores['graph_smiles'] = graph_scores['canon_smiles']
-            # scores['graph_graph'] = graph_scores['graph']
-            # scores['graph_chiral'] = graph_scores['chiral']
-            # scores['graph_tanimoto'] = graph_scores['tanimoto']
 
     print('Saving predictions:')
     file = data_df.attrs['file'].split('/')[-1]
