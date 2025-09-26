@@ -1,7 +1,6 @@
 import os
 import time
 import json
-import random
 import argparse
 import datetime
 import numpy as np
@@ -33,14 +32,11 @@ def get_args():
     Parse command-line arguments to configure the model's training, evaluation, and testing procedures.
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument('--do_train', action='store_true')
-    parser.add_argument('--do_valid', action='store_true')
-    parser.add_argument('--do_test', action='store_true')
-    parser.add_argument('--fp16', action='store_true')
+    parser.add_argument('--fp16', action='store_true',default=True)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--print_freq', type=int, default=200)
     parser.add_argument('--debug', action='store_true')
-    parser.add_argument('--backend', type=str, default='gloo', choices=['gloo', 'nccl'])
+    parser.add_argument('--backend', type=str, default='nccl', choices=['gloo', 'nccl'])
     
     # Model-specific options
     parser.add_argument('--encoder', type=str, default='swin_base')
@@ -68,33 +64,32 @@ def get_args():
     parser.add_argument('--train_file', type=str, default=None)
     parser.add_argument('--valid_file', type=str, default=None)
     parser.add_argument('--test_file', type=str, default=None)
-    parser.add_argument('--aux_file', type=str, default=None)
     parser.add_argument('--coords_file', type=str, default=None)
-    parser.add_argument('--vocab_file', type=str, default=None)
-    parser.add_argument('--dynamic_indigo', action='store_true')
+    parser.add_argument('--vocab_file', type=str, default='ML_model/MolNexTR/vocab/vocab_chars.json')
+    parser.add_argument('--dynamic_indigo', action='store_true',default=True)
     parser.add_argument('--default_option', action='store_true')
     parser.add_argument('--pseudo_coords', action='store_true')
-    parser.add_argument('--include_condensed', action='store_true')
-    parser.add_argument('--formats', type=str, default=None)
+    parser.add_argument('--include_condensed', action='store_true',default=True)
+    parser.add_argument('--formats', type=str, default='chartok_coords,edges')
     parser.add_argument('--num_workers', type=int, default=8)
     parser.add_argument('--input_size', type=int, default=384)
     parser.add_argument('--multiscale', action='store_true')
-    parser.add_argument('--augment', action='store_true')
-    parser.add_argument('--mol_augment', action='store_true')
-    parser.add_argument('--coord_bins', type=int, default=100)
+    parser.add_argument('--augment', action='store_true',default=True)
+    parser.add_argument('--mol_augment', action='store_true',default=True)
+    parser.add_argument('--coord_bins', type=int, default=64)
     parser.add_argument('--sep_xy', action='store_true')
     parser.add_argument('--mask_ratio', type=float, default=0)
     parser.add_argument('--continuous_coords', action='store_true')
 
     # Training parameters
     parser.add_argument('--epochs', type=int, default=8)
-    parser.add_argument('--batch_size', type=int, default=256)
-    parser.add_argument('--encoder_lr', type=float, default=1e-4)
+    parser.add_argument('--batch_size', type=int, default=5)
+    parser.add_argument('--encoder_lr', type=float, default=4e-4)
     parser.add_argument('--decoder_lr', type=float, default=4e-4)
     parser.add_argument('--weight_decay', type=float, default=1e-6)
     parser.add_argument('--max_grad_norm', type=float, default=5.)
     parser.add_argument('--scheduler', type=str, choices=['cosine', 'constant'], default='cosine')
-    parser.add_argument('--warmup_ratio', type=float, default=0)
+    parser.add_argument('--warmup_ratio', type=float, default=0.02)
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1)
     parser.add_argument('--load_path', type=str, default=None)
     parser.add_argument('--load_encoder_only', action='store_true')
@@ -105,10 +100,10 @@ def get_args():
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--all_data', action='store_true', help='Use both train and valid data for training.')
     parser.add_argument('--init_scheduler', action='store_true')
-    parser.add_argument('--label_smoothing', type=float, default=0.0)
+    parser.add_argument('--label_smoothing', type=float, default=0.1)
     parser.add_argument('--shuffle_nodes', action='store_true')
     parser.add_argument('--save_image', action='store_true')
-
+    parser.add_argument('--compute_confidence', action='store_true',default=False)
     args = parser.parse_args()
     return args
 
@@ -298,6 +293,7 @@ def train_loop(args, train_df, valid_df, aux_df, tokenizer, save_path):
     """
     Main training loop to iterate over epochs, perform training and validation, and save the model.
     """
+
     SUMMARY = None
     if args.local_rank == 0 and not args.debug:
         os.makedirs(save_path, exist_ok=True)
@@ -308,11 +304,9 @@ def train_loop(args, train_df, valid_df, aux_df, tokenizer, save_path):
 
     device = args.device
 
-    if aux_df is None:
-        train_dataset = TrainDataset(args, train_df, tokenizer, split='train', dynamic_indigo=args.dynamic_indigo)
-        print_rank_0(train_dataset.transform)
-    else:
-        train_dataset = AuxTrainDataset(args, train_df, aux_df, tokenizer)
+    train_dataset = TrainDataset(args, train_df, tokenizer, split='train', dynamic_indigo=args.dynamic_indigo)
+    #print_rank_0(train_dataset.transform)
+
     if args.local_rank != -1:
         train_sampler = DistributedSampler(train_dataset, shuffle=True)
     else:
@@ -418,150 +412,21 @@ def train_loop(args, train_df, valid_df, aux_df, tokenizer, save_path):
     if args.local_rank != -1:
         dist.barrier()
 
-
-def inference(args, data_df, tokenizer, encoder=None, decoder=None, save_path=None, split='test'):
-    print_rank_0("inference started")
-    print_rank_0(data_df.attrs['file'])
-
-    if args.local_rank == 0 and os.path.isdir(save_path):
-        os.makedirs(save_path, exist_ok=True)
-
-    device = args.device
-
-    dataset = TrainDataset(args, data_df, tokenizer, split=split)
-    if args.local_rank != -1:
-        sampler = DistributedSampler(dataset, shuffle=False)
-    else:
-        sampler = SequentialSampler(dataset)
-    dataloader = DataLoader(dataset,
-                            batch_size=args.batch_size * 2,
-                            sampler=sampler,
-                            num_workers=args.num_workers,
-                            prefetch_factor=4,
-                            persistent_workers=True,
-                            pin_memory=True,
-                            drop_last=False,
-                            collate_fn=bms_collate)
-    if encoder is None or decoder is None:
-        # valid/test mode
-        if args.load_path is None:
-            args.load_path = save_path
-        encoder, decoder = get_model(args, tokenizer, device, args.load_path)
-    predictions = valid_fn(dataloader, encoder, decoder, tokenizer, device, args)
-
-    # The evaluation and saving prediction is only performed in the master process.
-    if args.local_rank != 0:
-        return
-    print('Start evaluation')
-
-    # Deal with discrepancies between datasets
-    if 'pubchem_cid' in data_df.columns:
-        data_df['image_id'] = data_df['pubchem_cid']
-    if 'image_id' not in data_df.columns:
-        data_df['image_id'] = [path.split('/')[-1].split('.')[0] for path in data_df['file_path']]
-    pred_df = data_df[['image_id']].copy()
-    scores = {}
-
-    for format_ in args.formats:
-        if format_ in ['atomtok', 'atomtok_coords', 'chartok_coords']:
-            format_preds = [preds[format_] for preds in predictions]
-            # SMILES
-            pred_df['SMILES'] = [preds['smiles'] for preds in format_preds]
-            if format_ in ['atomtok_coords', 'chartok_coords']:
-                pred_df['node_coords'] = [preds['coords'] for preds in format_preds]
-                pred_df['node_symbols'] = [preds['symbols'] for preds in format_preds]
-            if args.compute_confidence:
-                pred_df['SMILES_scores'] = [preds['scores'] for preds in format_preds]
-                pred_df['indices'] = [preds['indices'] for preds in format_preds]
-
-    # Construct graph from predicted atoms and bonds (including verify chirality)
-    if 'edges' in args.formats:
-        pred_df['edges'] = [preds['edges'] for preds in predictions]
-        if args.compute_confidence:
-            pred_df['edges_scores'] = [preds['edges_scores'] for preds in predictions]
-        smiles_list, molblock_list, r_success = convert_graph_to_smiles(
-            pred_df['node_coords'], pred_df['node_symbols'], pred_df['edges'])
-
-        pred_df['graph_SMILES'] = smiles_list
-        if args.molblock:
-            pred_df['molblock'] = molblock_list
-
-    # Postprocess the predicted SMILES (verify chirality, expand functional groups)
-    if 'SMILES' in pred_df.columns:
-        if 'edges' in pred_df.columns:
-            smiles_list, _, r_success = postprocess_smiles(
-                pred_df['SMILES'], pred_df['node_coords'], pred_df['node_symbols'], pred_df['edges'])
-        else:
-            smiles_list, _, r_success = postprocess_smiles(pred_df['SMILES'])
-        pred_df['post_SMILES'] = smiles_list
-
-    # Keep the main molecule
-    if args.keep_main_molecule:
-        if 'graph_SMILES' in pred_df:
-            pred_df['graph_SMILES'] = keep_main_molecule(pred_df['graph_SMILES'])
-        if 'post_SMILES' in pred_df:
-            pred_df['post_SMILES'] = keep_main_molecule(pred_df['post_SMILES'])
-
-    # Compute scores
-    if 'SMILES' in data_df.columns:
-        evaluator = SmilesEvaluator(data_df['SMILES'], tanimoto=True)
-        if 'SMILES' in pred_df.columns:
-            scores.update(evaluator.evaluate(pred_df['SMILES']))
-        if 'post_SMILES' in pred_df.columns:
-            post_scores = evaluator.evaluate(pred_df['post_SMILES'])
-            scores['postprocessed_smiles'] = post_scores['canon_smiles']
-            scores['postprocessed_graph_smiles'] = post_scores['graph']
-            scores['postprocessed_chiral'] = post_scores['chiral']
-            scores['postprocessed_tanimoto'] = post_scores['tanimoto']
-        if 'graph_SMILES' in pred_df.columns:
-            graph_scores = evaluator.evaluate(pred_df['graph_SMILES'])
-            # scores['graph_smiles'] = graph_scores['canon_smiles']
-            # scores['graph_graph'] = graph_scores['graph']
-            # scores['graph_chiral'] = graph_scores['chiral']
-            # scores['graph_tanimoto'] = graph_scores['tanimoto']
-
-    print('Saving predictions:')
-    file = data_df.attrs['file'].split('/')[-1]
-    pred_df = format_df(pred_df)
-    if args.predict_coords:
-        pred_df = pred_df[['image_id', 'SMILES', 'node_coords']]
-    pred_df.to_csv(os.path.join(save_path, f'prediction_{file}'), index=False)
-    # Save scores
-    if split == 'test':
-        with open(os.path.join(save_path, f'eval_scores_{os.path.splitext(file)[0]}_{args.load_ckpt}.json'), 'w') as f:
-            json.dump(scores, f)
-
-    return scores
-
-
 def get_chemdraw_data(args):
     train_df, valid_df, test_df, aux_df = None, None, None, None
-    if args.do_train:
-        train_files = args.train_file.split(',')
-        train_df = pd.concat([pd.read_csv(os.path.join(args.data_path, file)) for file in train_files])
-        print_rank_0(f'train: {train_df.shape}')
-        if args.aux_file:
-            aux_df = pd.read_csv(os.path.join(args.data_path, args.aux_file))
-            print_rank_0(f'aux: {aux_df.shape}')
-    if args.do_train or args.do_valid:
-        valid_df = pd.read_csv(os.path.join(args.data_path, args.valid_file))
-        valid_df.attrs['file'] = args.valid_file
-        print_rank_0(f'valid: {valid_df.shape}')
-    if args.do_test:
-        test_files = args.test_file.split(',')
-        test_df = [pd.read_csv(os.path.join(args.data_path, file)) for file in test_files]
-        for file, df in zip(test_files, test_df):
-            df.attrs['file'] = file
-            print_rank_0(file + f' test: {df.shape}')
+
+    train_files = args.train_file.split(',')
+    train_df = pd.concat([pd.read_csv(os.path.join(args.data_path, file)) for file in train_files])
+
+    valid_df = pd.read_csv(os.path.join(args.data_path, args.valid_file))
+    valid_df.attrs['file'] = args.valid_file
+
     tokenizer = get_tokenizer(args)
     return train_df, valid_df, test_df, aux_df, tokenizer
 
+def train(args):
+    """ """
 
-def main():
-    """
-    Main function for model training, evaluation, and testing. Configures distributed training and orchestrates the workflow.
-    """
-    args = get_args()
     seed_torch(seed=args.seed)
 
     args.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -578,19 +443,8 @@ def main():
 
     train_df, valid_df, test_df, aux_df, tokenizer = get_chemdraw_data(args)
 
-    if args.do_train:
-        train_loop(args, train_df, valid_df, aux_df, tokenizer, args.save_path)
-
-    if args.do_valid:
-        scores = inference(args, valid_df, tokenizer, save_path=args.save_path, split='test')
-        print_rank_0(json.dumps(scores, indent=4))
-
-    if args.do_test:
-        assert type(test_df) is list
-        for df in test_df:
-            scores = inference(args, df, tokenizer, save_path=args.save_path, split='test')
-            print_rank_0(json.dumps(scores, indent=4))
-
+    train_loop(args, train_df, valid_df, aux_df, tokenizer, args.save_path)
 
 if __name__ == "__main__":
-    main()
+    args = get_args()
+    train(args)
