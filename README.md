@@ -7,9 +7,39 @@ The implementation of the ML model to predict SMILES strings from single images 
 Download the model checkpoint from https://zenodo.org/records/13304899/files/molnextr_best.pth?download=1
 
 ## Model fine-tuning
+A training run can be launched by the following command.
+Adapt the ```--load_path``` to point to a model checkpoint from which to load the weights, the ```--train_file``` to point to the csv to fine tune on, the ```--valid_file``` to point to the csv to fine validate on and  the ```--save_path``` option to define the output folder for the fine-tuned model.
+
 ```bash
-torchrun  --nproc_per_node=1 --nnodes=1 --node_rank 0 --master_addr localhost --master_port 10042 ML_model/train.py --train_file test_mini.csv --data_path Training-Data/test_mini --valid_file test_mini.csv
-``` 
+ torchrun --nproc_per_node=1 --nnodes=1 --node_rank 0 --master_addr localhost --master_port 63868 ML_model/train.py \
+ --data_path Training-Data \
+ --train_file pubchem/train_pubchem.csv  \
+ --coords_file aux_file \
+ --valid_file real/acs.csv \
+ --vocab_file ML_model/MolNexTR/vocab/vocab_chars.json \
+ --formats chartok_coords,edges \
+ --dynamic_indigo --augment --mol_augment \
+ --include_condensed \
+ --coord_bins 64 \
+ --sep_xy \
+ --input_size 384 \
+ --encoder_lr 4e-4 \
+ --decoder_lr 4e-4 \
+ --save_path output_path \
+ --load_path molnextr_best.pth \
+ --save_mode all \
+ --label_smoothing 0.1 \
+ --epochs 40 \
+ --batch_size 64 \
+ --gradient_accumulation_steps 1 \
+ --use_checkpoint \
+ --warmup 0.02 \
+ --print_freq 200 \
+ --do_train \
+ --do_valid \
+ --fp16 \
+ --backend gloo
+ ``` 
 
 ## Model evaluation
 Coming soon
