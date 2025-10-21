@@ -69,24 +69,27 @@ async def get_agent_prediction_result(uploaded_file):
 
     if resp == "macrocycle":
         # fine-tuned on macrocycles
-        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/molnextr_macrocycle.pth')
+        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/molnextr_macrocycle.pth'), "macrocycle"
     elif resp == "natural product":
         # fine-tuned on natural products
-        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/molnextr_natprod.pth')
+        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/molnextr_natprod.pth'), "natural product"
     else:
         assert resp == "neither" # hopefully the VLM follows instructions
         # default model
-        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/molnextr_best.pth')
+        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/molnextr_best.pth'), ""
 
 async def get_prediction_results(uploaded_files, checkpoint_path='checkpoints/molnextr_best.pth', use_agent=False):
     if use_agent:
         results = []
+        clss = []
         for file in uploaded_files:
-            results.append(get_agent_prediction_result(file))
+            res, cls = get_agent_prediction_result(file)
+            results.append(res)
+            clss.append(cls)
 
-        return results 
+        return results, clss
     else: 
-        return prediction.predict_from_image_files(uploaded_files, checkpoint_path)
+        return prediction.predict_from_image_files(uploaded_files, checkpoint_path), None
 
 @app.get("/")
 def read_root():
@@ -99,11 +102,11 @@ async def run_prediction(model: str = Form(...), images: str = Form(...)):
     checkpoint_path = os.path.join("ML_Model/checkpoints", model)
     
     start_time = datetime.now()
-    results = await get_prediction_results(images_list, checkpoint_path=checkpoint_path)
+    results, _ = await get_prediction_results(images_list, checkpoint_path=checkpoint_path)
     end_time = datetime.now()
     
     processing_time = (end_time - start_time).total_seconds()
-    results = await get_prediction_results(images_list, checkpoint_path=checkpoint_path)
+    results, _ = await get_prediction_results(images_list, checkpoint_path=checkpoint_path)
     
     results_with_files = [
         {
@@ -143,11 +146,11 @@ async def upload_and_run_prediction(file: UploadFile = File(...)):
         await file.close()
     
     # now we need to call the predition function from ML_model
-    results = await get_prediction_results(uploaded_file, checkpoint_path='checkpoints/molnextr_best.pth')
+    results, classifications = await get_prediction_results(uploaded_file, checkpoint_path='checkpoints/molnextr_best.pth', use_agent=True)
     return JSONResponse(content={
         "filename": new_filename,
         "file_paths": uploaded_file,
-        "message": "File uploaded successfully",
+        "message": f"File uploaded successfully, {classifications}", # TODO: integrate the classifications into the response message
         "results": results
     })
     
