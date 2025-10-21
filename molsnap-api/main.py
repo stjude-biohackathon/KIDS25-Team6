@@ -31,6 +31,11 @@ def read_root():
 
 @app.post("/prediction-only",status_code=status.HTTP_200_OK)
 async def run_prediction(model: str = Form(...), images: str = Form(...)):
+    # call the agent to classify the image
+
+    
+
+
     # now we need to call the predition function from ML_model
     images_list = [os.path.join("decimer-api", img) for img in ast.literal_eval(images)]
     checkpoint_path = os.path.join("ML_Model/checkpoints", model)

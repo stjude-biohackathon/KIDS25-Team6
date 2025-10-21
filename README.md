@@ -1,20 +1,11 @@
 # KIDS25-Team6 MolSnap
 
-# ML Modelling
-The implementation of the ML model to predict SMILES strings from single images is located in the ML_model subfolder.
+# How to run MolSnap locally
 
-# Installation
-```bash
-conda env create -n molsnap python=3.10
-
-conda activate molsnap
-pip3 install -r requirements.txt
-
-```
-## Model checkpoint 
+## Download Model Checkpoint
 Download the model checkpoint from https://zenodo.org/records/13304899/files/molnextr_best.pth?download=1
 
-## Model fine-tuning
+## Fine-tune on specific molecule types
 A training run can be launched by the following command.
 Adapt the ```--load_path``` to point to a model checkpoint from which to load the weights, the ```--train_file``` to point to the csv to fine tune on, the ```--valid_file``` to point to the csv to fine validate on and  the ```--save_path``` option to define the output folder for the fine-tuned model.
 
@@ -48,17 +39,66 @@ Adapt the ```--load_path``` to point to a model checkpoint from which to load th
  --fp16 \
  --backend gloo
  ``` 
+## Setting up the conda environments
+We will need two conda environments, `decimer` and `molsnap`
 
-## Model evaluation
-Coming soon
+### Creating `decimer`
+```bash
+# create and activate env
+conda create -n decimer python=3.10
+conda activate decimer
 
-## Model inference interface
-To predict SMILES from a single image file (png and jpg supported), interface as following
+# OPTIONAL: if pip is not installed in your conda environment
+conda install pip
+python -m pip install -U pip
 
-```python
-from ML_model import prediction
+# clone the DECIMER Image Segmentation repo
+git clone https://github.com/Kohulan/DECIMER-Image-Segmentation.git
 
-results = prediction.predict_from_image_files(['1.png','2.png'],'checkpoints/molnextr_best.pth')
+# assuming pip is installed,
+cd DECIMER-Image-Segmentation
+pip install .
+pip install decimer-segmentation
 
-
+# go to decimer-api/ directory
+cd ../decimer-api/
+pip install -r requirements.txt
 ```
+
+### Creating `molsnap`
+```bash
+# create and activate env
+conda create -n molsnap python=3.10
+conda activate molsnap
+
+# OPTIONAL: if pip is not installed in your conda environment
+conda install pip
+python -m pip install -U pip
+
+# assuming you're in the root: KIDS25-Team6/
+pip install -r requirements.txt
+
+# go to molsnap-api/ directory
+cd molsnap-api/
+pip install -r requirements.txt
+```
+
+## Running MolSnap
+If you don't have Node.js installed, install nvm. Follow installation guidelines here: http://github.com/nvm-sh/nvm
+```bash
+# in one terminal tab
+conda activate decimer # ensure you're using decimer env
+cd KIDS25-Team6/decimer-api
+uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+
+# open another terminal tab, and 
+conda activate molsnap # ensure you're using molsnap env
+cd KIDS25-Team6/
+uvicorn "molsnap-api.main:app" --host 0.0.0.0 --port 8000 --reload
+
+# open a third terminal tab, and
+cd KIDS25-Team6/molsnap
+npm install
+npm run dev
+```
+Application is now running on http://localhost:5173/
