@@ -23,7 +23,11 @@ You MUST respond with one of the classifications verbatim.
 # If the molecule does not fit into any of the categories above, you MUST respond in one word, and that one word must be "generic".
 # You MUST respond with either one word or one of the category names verbatim.
 USER_PROMPT = """
-Classify the given image as a macrocycle or natural product. Please return 'macrocycle' 'natural product' or 'neither'
+Classify the given image as a macrocycle, natural product, molecular glue, or none of the above.
+If macrocycle, return 'macrocycle' 
+If natural product, return 'natprod' 
+If molecular glue, return 'glue' 
+Otherwise, return 'neither', omitting the single quotes.
 """
 
 app = FastAPI()
@@ -69,10 +73,13 @@ async def get_agent_prediction_result(uploaded_file):
 
     if resp == "macrocycle":
         # fine-tuned on macrocycles
-        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/molnextr_macrocycle.pth'), "macrocycle"
-    elif resp == "natural product":
+        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/macro_best.pth'), "macrocycle"
+    elif resp == "natprod":
         # fine-tuned on natural products
-        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/molnextr_natprod.pth'), "natural product"
+        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/natprod_best.pth'), "natural product"
+    elif resp == "glue":
+        # fine-tuned on natural products
+        return prediction.predict_from_image_files([uploaded_file], 'checkpoints/glues_best.pth'), "glue"
     else:
         assert resp == "neither" # hopefully the VLM follows instructions
         # default model
